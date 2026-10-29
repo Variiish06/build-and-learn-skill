@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Docker &amp; Compose Sheet</title>
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body class="ref">
+<main>
+<p class="eyebrow">Reference · Topic 1</p>
+<h1>Docker &amp; Compose Sheet</h1>
+<p class="meta"><span>From <a href="../lessons/0002-postgres-in-a-box.html">Lesson 0002</a></span><span>Verified on the home server: Docker 29.8, Compose v5.5, postgres:18</span></p>
+
+<div class="grid">
+<section>
+<h2>Mental model</h2>
+<div class="tbl"><table>
+<tr><td><strong>Image</strong></td><td>Read-only template. One image → many containers.</td></tr>
+<tr><td><strong>Container</strong></td><td>Running, isolated process. Its own writes die with it.</td></tr>
+<tr><td><strong>Port</strong></td><td><code>[IP:]HOST:CONTAINER</code> forwarding rule. Default IP is all interfaces.</td></tr>
+<tr><td><strong>Named volume</strong></td><td>Storage that outlives containers. Durability lives here.</td></tr>
+<tr><td><strong>Anonymous volume</strong></td><td>Auto-created from an image's <code>VOLUME</code>. Orphaned when the container is re-created.</td></tr>
+</table></div>
+
+<h2>docker run</h2>
+<pre><code>docker run -d --name scratch \
+  -e POSTGRES_PASSWORD=pw \
+  -v scratchdata:/var/lib/postgresql \
+  -p 127.0.0.1:5432:5432 \
+  postgres:18</code></pre>
+<pre><code>docker ps                       # running containers
+docker exec -it scratch psql -U postgres
+docker logs -f scratch
+docker inspect scratch --format '{{json .Mounts}}'
+docker rm -f scratch            # keeps volumes
+docker rm -f -v scratch         # also removes its anonymous volumes
+docker volume ls
+docker volume rm scratchdata</code></pre>
+</section>
+
+<section>
+<h2>compose.yaml (engine db)</h2>
+<pre><code>services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: engine
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}   # from .env (gitignored)
+      POSTGRES_DB: engine
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U engine -d engine"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  # later:
+  # api:
+  #   depends_on:
+  #     db: { condition: service_healthy }
+
+volumes:
+  pgdata:</code></pre>
+
+<h2>docker compose</h2>
+<pre><code>docker compose config           # validate and render
+docker compose up -d
+docker compose ps               # look for (healthy)
+docker compose logs -f db
+docker compose exec db psql -U engine -d engine
+docker compose down             # keeps pgdata
+docker compose down -v          # DELETES pgdata</code></pre>
+</section>
+</div>
+
+<h2>Traps</h2>
+<ul>
+<li><strong>Postgres 18+</strong> mounts at <code>/var/lib/postgresql</code>. For ≤17 it's <code>/var/lib/postgresql/data</code>. <a href="https://hub.docker.com/_/postgres">Docker Hub: postgres</a></li>
+<li><strong>Docker bypasses ufw</strong> for published ports. Bind to <code>127.0.0.1</code>. <a href="https://docs.docker.com/engine/network/packet-filtering-firewalls/">Docker docs</a></li>
+<li><strong>Running ≠ ready.</strong> Use a healthcheck plus <code>condition: service_healthy</code>. <a href="https://docs.docker.com/compose/how-tos/startup-order/">Docker docs</a></li>
+<li>Inside Compose, other services reach Postgres at host <code>db</code>, port <code>5432</code>. From the server itself, use <code>127.0.0.1:5432</code>.</li>
+</ul>
+</main>
+<script src="../assets/course.js"></script>
+</body>
+</html>

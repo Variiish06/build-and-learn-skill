@@ -1,0 +1,1099 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exec Engine Study Notes</title>
+<meta name="description" content="Everything learned so far building the exactly-once trade execution engine: Docker, Compose, SQL, transactions, Python and the lost update.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f5f3ec;
+  --paper: #faf9f5;
+  --ink: #1f1e1b;
+  --ink-2: #5e5d57;
+  --ink-3: #8a887f;
+  --rule: #e2dfd4;
+  --rule-strong: #cfcbbd;
+  --accent: #c2603f;
+  --accent-soft: #f3e3da;
+  --code-bg: #efece3;
+  --good: #3f7a52;
+  --good-soft: #e3eee4;
+  --bad: #b04a3a;
+  --bad-soft: #f5e1dc;
+  --warn-soft: #f4ead2;
+  --serif: 'Newsreader', 'Iowan Old Style', Georgia, serif;
+  --sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1c1b18; --paper: #22211e; --ink: #ecebe4; --ink-2: #b4b2a8; --ink-3: #8c8a81;
+    --rule: #34322d; --rule-strong: #46433c; --accent: #e08a6b; --accent-soft: #3a2a23;
+    --code-bg: #2a2925; --good: #8cc59c; --good-soft: #233127; --bad: #e88f80; --bad-soft: #3a2522;
+    --warn-soft: #353022; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #1c1b18; --paper: #22211e; --ink: #ecebe4; --ink-2: #b4b2a8; --ink-3: #8c8a81;
+  --rule: #34322d; --rule-strong: #46433c; --accent: #e08a6b; --accent-soft: #3a2a23;
+  --code-bg: #2a2925; --good: #8cc59c; --good-soft: #233127; --bad: #e88f80; --bad-soft: #3a2522;
+  --warn-soft: #353022; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.65 var(--sans); -webkit-font-smoothing: antialiased; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+@media (min-width: 700px) { .wrap { padding: 0 32px; } }
+
+/* Top bar */
+.top { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; border-bottom: 1px solid var(--rule); font-size: 14px; color: var(--ink-2); }
+.top .crumb { letter-spacing: .02em; }
+.theme-btn { font: 500 13px var(--sans); color: var(--ink-2); background: transparent; border: 1px solid var(--rule-strong); border-radius: 999px; padding: 6px 14px; cursor: pointer; }
+.theme-btn:hover { color: var(--ink); border-color: var(--ink-3); }
+
+/* Hero */
+.hero { padding: 64px 0 48px; border-bottom: 1px solid var(--rule); }
+.eyebrow { font: 500 13px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin: 0 0 20px; }
+h1 { font: 500 clamp(40px, 7vw, 68px)/1.05 var(--serif); letter-spacing: -.02em; margin: 0 0 24px; max-width: 16ch; }
+.lede { font: 400 clamp(19px, 2.4vw, 23px)/1.5 var(--serif); color: var(--ink-2); max-width: 40em; margin: 0; }
+.meta-row { display: flex; flex-wrap: wrap; gap: 8px 28px; margin-top: 32px; font-size: 14px; color: var(--ink-3); }
+.meta-row b { color: var(--ink); font-weight: 600; }
+
+/* Progress */
+.progress { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; margin-top: 40px; }
+.progress div { background: var(--paper); padding: 16px 18px; font-size: 14px; }
+@media (max-width: 799px) { .progress div:last-child:nth-child(odd) { grid-column: 1 / -1; } }
+.progress .n { font: 500 12px var(--mono); color: var(--ink-3); display: block; margin-bottom: 4px; }
+.progress .t { font-weight: 600; display: block; line-height: 1.3; }
+.progress .s { font-size: 13px; margin-top: 6px; display: inline-block; }
+.s.done { color: var(--good); } .s.now { color: var(--accent); } .s.next { color: var(--ink-3); }
+
+/* Layout */
+.layout { display: grid; grid-template-columns: 1fr; gap: 48px; padding: 56px 0 96px; }
+@media (min-width: 1000px) { .layout { grid-template-columns: 210px minmax(0, 1fr); gap: 64px; } }
+nav.toc { font-size: 14px; }
+@media (min-width: 1000px) { nav.toc { position: sticky; top: 24px; align-self: start; max-height: calc(100vh - 48px); overflow: auto; } }
+nav.toc p { font: 500 12px var(--sans); text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3); margin: 0 0 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: t; }
+nav.toc li { counter-increment: t; }
+nav.toc a { display: flex; gap: 10px; padding: 6px 0; color: var(--ink-2); text-decoration: none; border-left: 2px solid transparent; padding-left: 12px; margin-left: -14px; }
+nav.toc a::before { content: counter(t, decimal-leading-zero); font: 400 12px/1.9 var(--mono); color: var(--ink-3); }
+nav.toc a:hover { color: var(--ink); }
+nav.toc a.active { color: var(--ink); border-left-color: var(--accent); }
+@media (max-width: 999px) {
+  nav.toc { border: 1px solid var(--rule); border-radius: 10px; padding: 18px 20px; background: var(--paper); }
+  nav.toc a { margin-left: 0; padding-left: 0; border: 0; }
+}
+
+/* Article */
+article { min-width: 0; max-width: 760px; }
+section { padding-bottom: 56px; margin-bottom: 56px; border-bottom: 1px solid var(--rule); scroll-margin-top: 24px; }
+section:last-child { border-bottom: 0; }
+.sec-num { font: 500 13px var(--mono); color: var(--accent); margin: 0 0 8px; }
+h2 { font: 500 clamp(30px, 4vw, 40px)/1.15 var(--serif); letter-spacing: -.015em; margin: 0 0 20px; }
+h3 { font: 600 19px/1.35 var(--sans); letter-spacing: -.01em; margin: 40px 0 12px; }
+p { margin: 0 0 16px; }
+.big { font: 400 21px/1.55 var(--serif); color: var(--ink-2); }
+strong { font-weight: 600; }
+a { color: var(--accent); text-underline-offset: 3px; }
+ul, ol { padding-left: 22px; margin: 0 0 16px; }
+li { margin-bottom: 6px; }
+li::marker { color: var(--ink-3); }
+
+code { font: 0.86em var(--mono); background: var(--code-bg); padding: 2px 6px; border-radius: 5px; overflow-wrap: anywhere; }
+pre { position: relative; margin: 0 0 20px; background: var(--code-bg); border: 1px solid var(--rule); border-radius: 10px; padding: 18px 20px; overflow-x: auto; font: 14px/1.65 var(--mono); }
+pre code { background: none; padding: 0; font-size: inherit; overflow-wrap: normal; }
+pre .c { color: var(--ink-3); }
+.copy { position: absolute; top: 10px; right: 10px; font: 500 12px var(--sans); color: var(--ink-2); background: var(--paper); border: 1px solid var(--rule-strong); border-radius: 6px; padding: 4px 10px; cursor: pointer; opacity: 0; transition: opacity .15s; }
+pre:hover .copy, .copy:focus-visible { opacity: 1; }
+@media (hover: none) { .copy { opacity: 1; } }
+
+.table-wrap { overflow-x: auto; margin: 0 0 24px; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); }
+table { width: 100%; border-collapse: collapse; font-size: 15px; line-height: 1.5; }
+th { text-align: left; font: 600 12px var(--sans); text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); padding: 12px 16px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+td { padding: 12px 16px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { white-space: nowrap; }
+td code { white-space: nowrap; }
+@media (max-width: 600px) { td:first-child, td code { white-space: normal; } }
+
+.callout { border-left: 3px solid var(--accent); background: var(--paper); border-radius: 0 10px 10px 0; padding: 16px 20px; margin: 0 0 24px; }
+.callout .label { font: 600 12px var(--sans); text-transform: uppercase; letter-spacing: .08em; color: var(--accent); margin-bottom: 6px; display: block; }
+.callout p:last-child { margin-bottom: 0; }
+.callout.analogy { border-left-color: var(--ink-3); }
+.callout.analogy .label { color: var(--ink-2); }
+.callout.danger { border-left-color: var(--bad); background: var(--bad-soft); }
+.callout.danger .label { color: var(--bad); }
+.callout.ddia { border-left-color: var(--good); background: var(--good-soft); }
+.callout.ddia .label { color: var(--good); }
+
+.quote { font: 400 20px/1.55 var(--serif); font-style: italic; border-left: 3px solid var(--rule-strong); padding: 4px 0 4px 20px; margin: 0 0 24px; color: var(--ink); }
+
+.vs { display: grid; grid-template-columns: 1fr; gap: 12px; margin: 0 0 24px; }
+@media (min-width: 640px) { .vs { grid-template-columns: 1fr 1fr; } }
+.vs > div { border: 1px solid var(--rule); border-radius: 10px; padding: 18px 20px; background: var(--paper); }
+.vs h4 { margin: 0 0 8px; font: 600 15px var(--sans); }
+.vs .bad h4 { color: var(--bad); } .vs .good h4 { color: var(--good); }
+.vs p:last-child, .vs pre:last-child { margin-bottom: 0; }
+
+.timeline { font: 14px/1.7 var(--mono); }
+
+.qa { border: 1px solid var(--rule); border-radius: 10px; background: var(--paper); margin: 0 0 12px; }
+.qa summary { cursor: pointer; padding: 16px 20px; font-weight: 600; list-style: none; display: flex; gap: 12px; }
+.qa summary::-webkit-details-marker { display: none; }
+.qa summary::before { content: "+"; font: 500 18px/1.3 var(--mono); color: var(--accent); width: 14px; flex: none; }
+.qa[open] summary::before { content: "−"; }
+.qa .ans { padding: 0 20px 18px 46px; }
+.qa .ans p { font: 400 18px/1.6 var(--serif); }
+
+.gotchas { counter-reset: g; }
+.gotcha { display: grid; grid-template-columns: 1fr; gap: 4px; padding: 16px 0; border-bottom: 1px solid var(--rule); }
+.gotcha:last-child { border-bottom: 0; }
+.gotcha .what { font-weight: 600; }
+.gotcha .fix { color: var(--ink-2); font-size: 16px; }
+.tag { display: inline-block; font: 500 11px var(--sans); text-transform: uppercase; letter-spacing: .06em; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); margin-right: 8px; vertical-align: 2px; }
+.tag.ok { background: var(--good-soft); color: var(--good); }
+
+footer { border-top: 1px solid var(--rule); padding: 32px 0 64px; color: var(--ink-3); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <span class="crumb">Exec Engine · Study notes</span>
+    <button class="theme-btn" id="themeBtn" type="button">Theme: System</button>
+  </header>
+
+  <div class="hero">
+    <p class="eyebrow">Study notes · Updated 28 October 2026</p>
+    <h1>What you’ve learned so far</h1>
+    <p class="lede">You’re building a trade execution engine that guarantees every order runs exactly once, even when workers crash. These notes cover every concept, command and mistake from the first five topics, written so you can review them without needing the chat.</p>
+    <div class="meta-row">
+      <span>Project folder <b>~/exec-engine</b></span>
+      <span>Database <b>Postgres 18 in Docker</b></span>
+      <span>Language <b>Python + raw SQL</b></span>
+    </div>
+    <div class="progress" aria-label="Course progress">
+      <div><span class="n">01</span><span class="t">Docker &amp; Compose</span><span class="s done">✓ Done</span></div>
+      <div><span class="n">02</span><span class="t">SQL &amp; transactions</span><span class="s done">✓ Done</span></div>
+      <div><span class="n">03</span><span class="t">Python ↔ Postgres</span><span class="s done">✓ Done</span></div>
+      <div><span class="n">04</span><span class="t">Lost updates &amp; locking</span><span class="s done">✓ Done</span></div>
+      <div><span class="n">05</span><span class="t">Queue with SKIP LOCKED</span><span class="s done">✓ Done</span></div>
+      <div><span class="n">06</span><span class="t">Processing &amp; leases</span><span class="s now">● Up next</span></div>
+    </div>
+  </div>
+
+  <div class="layout">
+    <nav class="toc" aria-label="Contents">
+      <p>Contents</p>
+      <ol>
+        <li><a href="#docker">Docker basics</a></li>
+        <li><a href="#volumes">Volumes &amp; persistence</a></li>
+        <li><a href="#compose">Docker Compose</a></li>
+        <li><a href="#security">Secrets &amp; ports</a></li>
+        <li><a href="#psql">Using psql</a></li>
+        <li><a href="#sql">SQL &amp; CRUD</a></li>
+        <li><a href="#constraints">Constraints</a></li>
+        <li><a href="#transactions">Transactions</a></li>
+        <li><a href="#isolation">Isolation &amp; locks</a></li>
+        <li><a href="#python">Python ↔ Postgres</a></li>
+        <li><a href="#lost-update">The lost update</a></li>
+        <li><a href="#queue">The job queue</a></li>
+        <li><a href="#gotchas">Mistakes you made</a></li>
+        <li><a href="#interview">Interview answers</a></li>
+        <li><a href="#cheatsheet">Command cheat sheet</a></li>
+        <li><a href="#reading">DDIA reading plan</a></li>
+      </ol>
+    </nav>
+
+    <article>
+
+<!-- 01 -->
+<section id="docker">
+  <p class="sec-num">01</p>
+  <h2>Docker basics</h2>
+  <p class="big">Docker runs a program in an isolated box with everything it needs, so you never have to install Postgres on the server itself.</p>
+
+  <div class="table-wrap"><table>
+    <tr><th>Concept</th><th>What it is</th><th>In your engine</th></tr>
+    <tr><td><strong>Image</strong></td><td>A frozen, read-only recipe: the files, program and settings. It can’t be changed after it’s built.</td><td><code>postgres:18</code></td></tr>
+    <tr><td><strong>Container</strong></td><td>One running copy of an image. You can start many from the same image.</td><td><code>exec-engine-db-1</code></td></tr>
+    <tr><td><strong>Volume</strong></td><td>Storage that lives <em>outside</em> any container, so it survives the container being deleted.</td><td><code>exec-engine_pgdata</code></td></tr>
+    <tr><td><strong>Port publishing</strong></td><td>A forwarding rule: traffic to a port on the server is passed to a port inside the container.</td><td><code>127.0.0.1:5432 → 5432</code></td></tr>
+  </table></div>
+
+  <div class="callout analogy"><span class="label">Analogy</span>
+    <p>The image is a recipe card, and a container is one dish cooked from it. You can cook many dishes from one card, and throwing a dish away doesn’t change the card.</p>
+  </div>
+
+  <h3>Your first command, explained</h3>
+<pre><code>docker run -d --name scratch -e POSTGRES_PASSWORD=pw postgres:18</code></pre>
+  <div class="table-wrap"><table>
+    <tr><th>Part</th><th>Meaning</th></tr>
+    <tr><td><code>docker run</code></td><td>Create and start a new container from an image.</td></tr>
+    <tr><td><code>-d</code></td><td><strong>Detached</strong>: runs in the background and gives you your prompt back. Without it, the container still runs, but your terminal shows its logs and Ctrl+C stops it.</td></tr>
+    <tr><td><code>--name scratch</code></td><td>Gives the container a name you can refer to, instead of a random one.</td></tr>
+    <tr><td><code>-e KEY=value</code></td><td>Sets an <strong>environment variable</strong> inside the container. Postgres won’t start without <code>POSTGRES_PASSWORD</code>.</td></tr>
+    <tr><td><code>postgres:18</code></td><td>The image to use: name <code>postgres</code>, tag (version) <code>18</code>.</td></tr>
+  </table></div>
+
+  <h3>Other commands you used</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Command</th><th>What it does</th></tr>
+    <tr><td><code>docker ps</code></td><td>Lists running containers. Add <code>-a</code> to include stopped ones.</td></tr>
+    <tr><td><code>docker exec -it NAME CMD</code></td><td>Runs a command inside a running container. <code>-it</code> makes it interactive so you can type into it.</td></tr>
+    <tr><td><code>docker rm -f NAME</code></td><td>Deletes a container. <code>-f</code> forces it, stopping the container first if it’s running.</td></tr>
+    <tr><td><code>docker inspect NAME --format '{{json .Mounts}}'</code></td><td>Shows what’s mounted into a container. Note the space in <code>json .Mounts</code>.</td></tr>
+    <tr><td><code>docker image inspect postgres:18 --format '{{json .Config.Volumes}}'</code></td><td>Asks an image which folders it stores data in.</td></tr>
+    <tr><td><code>docker volume ls</code></td><td>Lists every volume on the machine.</td></tr>
+    <tr><td><code>docker volume rm NAME</code></td><td>Deletes a volume and <strong>all the data in it</strong>.</td></tr>
+  </table></div>
+
+  <div class="callout danger"><span class="label">Never run on the server</span>
+    <p><code>docker system prune</code> and <code>docker volume prune</code> delete things across <em>every</em> project, including your other apps (&lt;other-project&gt;, &lt;other-project&gt;, &lt;other-project&gt;). Only remove things by the names you created.</p>
+  </div>
+</section>
+
+<!-- 02 -->
+<section id="volumes">
+  <p class="sec-num">02</p>
+  <h2>Volumes &amp; persistence</h2>
+  <p class="big">A database is only useful if committed data survives. Here’s what you proved with your own experiments.</p>
+
+  <h3>Experiment A: no volume named</h3>
+  <ol>
+    <li>You started Postgres without <code>-v</code> and created an <code>orders</code> table.</li>
+    <li><code>docker inspect</code> showed a volume anyway, with a long random name. The <code>postgres</code> image <em>declares</em> its data folder as a volume, so Docker quietly created an <strong>anonymous volume</strong>.</li>
+    <li>You deleted the container and started a new one, and got <code>relation "orders" does not exist</code>.</li>
+    <li><code>docker volume ls</code> showed <strong>two</strong> volumes: the old one (your data, still there) and a new empty one for the new container.</li>
+  </ol>
+  <p>The data wasn’t deleted, it was <strong>orphaned</strong>: still on disk, but nothing points to it. In real systems the disk fills with copies and nobody knows which one is the real database.</p>
+
+  <h3>Experiment B: a named volume</h3>
+<pre><code>docker run -d --name scratomus -v scratomusdata:/var/lib/postgresql -e POSTGRES_PASSWORD=pw postgres:18</code></pre>
+  <p>You deleted the container, started a <em>differently named</em> container with the same <code>-v</code>, and AAPL was still there. <strong>The data belongs to the volume, not the container.</strong></p>
+
+  <h3>The <code>-v</code> flag</h3>
+<pre><code>-v VOLUME_NAME:PATH_INSIDE_CONTAINER</code></pre>
+  <ul>
+    <li><strong>Left side:</strong> a name you choose. If the volume doesn’t exist yet, Docker creates it.</li>
+    <li><strong>Right side:</strong> the folder where the program writes its data. It has to be exactly right.</li>
+  </ul>
+
+  <h3>How to find the right path</h3>
+  <ol>
+    <li>Ask the image: <code>docker image inspect postgres:18 --format '{{json .Config.Volumes}}'</code></li>
+    <li>Read the image’s Docker Hub page (the <code>PGDATA</code> section for Postgres).</li>
+    <li>Look at the <code>Destination</code> in <code>docker inspect</code> of a running container.</li>
+  </ol>
+
+  <div class="callout"><span class="label">Version trap</span>
+    <p>Postgres <strong>18+</strong> uses <code>/var/lib/postgresql</code>. Postgres 17 and older used <code>/var/lib/postgresql/data</code>, and most tutorials still show the old path.</p>
+  </div>
+
+  <div class="callout danger"><span class="label">Why a wrong path is dangerous</span>
+    <p>If you mount your named volume at the wrong folder, Postgres writes somewhere else (into an anonymous volume), and <strong>your named volume stays empty</strong>. There’s no error and everything appears to work. You only find out when the container is re-created and the database is empty, often during a demo or in production. It fails <em>silently</em>.</p>
+  </div>
+</section>
+
+<!-- 03 -->
+<section id="compose">
+  <p class="sec-num">03</p>
+  <h2>Docker Compose</h2>
+  <p class="big">Instead of typing long <code>docker run</code> commands, you describe your containers once in <code>compose.yaml</code> and start them all with one command.</p>
+
+  <h3>Your finished file</h3>
+<pre><code>services:
+  db:                                   <span class="c"># a service = one kind of container</span>
+    image: postgres:18
+    environment:
+      POSTGRES_USER: engine
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}  <span class="c"># value comes from .env</span>
+      POSTGRES_DB: engine               <span class="c"># the database name you connect to</span>
+    ports:
+      - "127.0.0.1:5432:5432"           <span class="c"># only this machine can connect</span>
+    volumes:
+      - pgdata:/var/lib/postgresql      <span class="c"># ① mount: name:path</span>
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U engine -d engine"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  pgdata:                               <span class="c"># ② declare: just the name</span></code></pre>
+
+  <h3>How <code>docker run</code> maps to Compose</h3>
+  <div class="table-wrap"><table>
+    <tr><th>docker run</th><th>compose.yaml</th></tr>
+    <tr><td>the container</td><td>a service under <code>services:</code></td></tr>
+    <tr><td><code>postgres:18</code></td><td><code>image:</code></td></tr>
+    <tr><td><code>-e KEY=value</code></td><td><code>environment:</code></td></tr>
+    <tr><td><code>-v name:/path</code></td><td><code>volumes:</code> list item inside the service</td></tr>
+    <tr><td><code>-p host:container</code></td><td><code>ports:</code></td></tr>
+    <tr><td><code>-d</code></td><td>not in the file; use <code>docker compose up -d</code></td></tr>
+  </table></div>
+
+  <h3>The two <code>volumes:</code> sections</h3>
+  <div class="vs">
+    <div><h4>① Inside the service</h4><p>“Mount <em>this</em> volume at <em>this</em> path.” Written as <code>- name:path</code>.</p></div>
+    <div><h4>② At the top level</h4><p>“These named volumes exist.” Only the name, followed by a colon.</p></div>
+  </div>
+  <div class="callout analogy"><span class="label">Analogy</span>
+    <p>② is the building’s list of filing cabinets. ① is the instruction “put cabinet X in this desk’s Data drawer”.</p>
+  </div>
+
+  <h3>YAML rules</h3>
+  <ul>
+    <li><code>key: value</code>, with a space after the colon.</li>
+    <li>Indent with <strong>2 spaces</strong>, never tabs. Indentation shows what belongs to what.</li>
+    <li>A list item is <code>- item</code>, with a dash <strong>and a space</strong>.</li>
+    <li>Wrap port mappings in quotes. Older YAML can misread numbers with colons, such as <code>22:22</code>.</li>
+  </ul>
+
+  <h3>Reading Compose errors</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Error</th><th>What it means</th></tr>
+    <tr><td><code>services.db.volumes must be a array</code></td><td>Missing space after a dash, so YAML didn’t see a list item.</td></tr>
+    <tr><td><code>additional properties 'X' not allowed</code></td><td>Something is in the wrong place. If no path appears before it, the problem is at the <strong>top level</strong>.</td></tr>
+  </table></div>
+
+  <h3>Health check: running isn’t the same as ready</h3>
+  <p>For a few seconds after starting, Postgres is running but not yet accepting connections. The health check runs <code>pg_isready</code> every 5 seconds. <code>docker compose ps</code> shows <code>(health: starting)</code> first, then <code>(healthy)</code>. Later, your workers will wait for <code>healthy</code> before they start.</p>
+  <div class="callout"><span class="label">Don’t mix these up</span>
+    <p>The <strong>volume</strong> answers “does the data survive?”, and the <strong>health check</strong> answers “is the database ready right now?”. A health check has nothing to do with saving data.</p>
+  </div>
+
+  <h3>Compose commands</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Command</th><th>What it does</th></tr>
+    <tr><td><code>docker compose config</code></td><td>Checks the file for mistakes and prints the final config. It shows real secret values.</td></tr>
+    <tr><td><code>docker compose config --no-interpolate</code></td><td>Same, but shows <code>${POSTGRES_PASSWORD}</code> instead of the value. Use this when you paste output anywhere.</td></tr>
+    <tr><td><code>docker compose up -d</code></td><td>Creates and starts everything, in the background.</td></tr>
+    <tr><td><code>docker compose ps</code></td><td>Lists this project’s containers, with their status and ports.</td></tr>
+    <tr><td><code>docker compose exec db psql -U engine -d engine</code></td><td>Opens a SQL shell in the <code>db</code> service.</td></tr>
+    <tr><td><code>docker compose down</code></td><td>Removes the containers and network, and <strong>keeps</strong> volumes, so your data is safe.</td></tr>
+    <tr><td><code>docker compose down -v</code></td><td>Also <strong>deletes the volumes</strong>, so your database is gone. Useful for a clean slate during development; never use it before a demo or in production.</td></tr>
+  </table></div>
+  <p>Compose prefixes everything with the folder name, giving <code>exec-engine_pgdata</code> and <code>exec-engine_default</code>. That’s why your engine can never collide with <code>otherapp_pgdata</code>.</p>
+</section>
+
+<!-- 04 -->
+<section id="security">
+  <p class="sec-num">04</p>
+  <h2>Secrets &amp; ports</h2>
+
+  <h3>The password lives in <code>.env</code></h3>
+  <ul>
+    <li><code>.env</code> holds <code>POSTGRES_PASSWORD=…</code> and stays on the server.</li>
+    <li><code>compose.yaml</code> only contains the placeholder <code>${POSTGRES_PASSWORD}</code>, so it’s safe to put on GitHub.</li>
+    <li><strong><code>.gitignore</code></strong> lists <code>.env</code> and <code>.venv</code>, so Git never uploads them. This is the mechanism to name in an interview.</li>
+  </ul>
+  <p>Postgres only reads <code>POSTGRES_PASSWORD</code> the <strong>first time</strong> it starts with an empty volume. After that, the password is stored inside the database, and changing <code>.env</code> does nothing.</p>
+
+  <h3>Why <code>127.0.0.1</code></h3>
+  <div class="vs">
+    <div class="bad"><h4>"5432:5432"</h4><p>Published on <strong>every</strong> network interface. Any device on your WiFi or Tailscale can try passwords.</p></div>
+    <div class="good"><h4>"127.0.0.1:5432:5432"</h4><p>Only programs <strong>on the server itself</strong> can connect. That’s all your workers need.</p></div>
+  </div>
+  <div class="callout danger"><span class="label">Why ufw doesn’t help</span>
+    <p>Docker adds its own firewall rules for published ports, and <strong>they’re applied before ufw’s rules</strong>. So a ufw “deny 5432” never gets a chance to block the traffic. Remember: Docker’s rules come first.</p>
+  </div>
+  <p><strong>Access from your PC:</strong> Tailscale can’t reach Postgres directly. You SSH into the server (over Tailscale), and an SSH tunnel (VS Code port forwarding) reaches <code>localhost:5432</code>. Expose as little as possible, and tunnel in when you need access.</p>
+</section>
+
+<!-- 05 -->
+<section id="psql">
+  <p class="sec-num">05</p>
+  <h2>Using psql</h2>
+  <p>psql is Postgres’s command-line client. Every SQL statement ends with <code>;</code>.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Prompt</th><th>Meaning</th></tr>
+    <tr><td><code>engine=#</code></td><td>Ready for a new statement.</td></tr>
+    <tr><td><code>engine-#</code></td><td>Still waiting for you to finish the statement, usually a missing <code>;</code>. Type <code>;</code> and press Enter.</td></tr>
+    <tr><td><code>engine(#</code></td><td>You have an unclosed <code>(</code>.</td></tr>
+    <tr><td><code>engine=*#</code></td><td>You’re <strong>inside an open transaction</strong>. Nothing is permanent until <code>COMMIT</code>.</td></tr>
+  </table></div>
+  <div class="table-wrap"><table>
+    <tr><th>Shortcut</th><th>What it does</th></tr>
+    <tr><td><code>\dt</code> / <code>\d</code></td><td>List tables (and sequences).</td></tr>
+    <tr><td><code>\d orders</code></td><td>Describe a table: columns, types and constraints.</td></tr>
+    <tr><td><code>\q</code></td><td>Quit psql.</td></tr>
+    <tr><td><code>psql ... -c "SQL;"</code></td><td>Run one statement and exit, without opening the shell.</td></tr>
+  </table></div>
+  <div class="callout danger"><span class="label">A missing semicolon</span>
+    <p>You typed <code>DELETE ... WHERE qty &lt;= 0</code> without <code>;</code>, then a <code>SELECT</code>. psql joined them into one invalid statement, so the delete <strong>never ran</strong>. Watch for the <code>engine-#</code> prompt.</p>
+  </div>
+</section>
+
+<!-- 06 -->
+<section id="sql">
+  <p class="sec-num">06</p>
+  <h2>SQL &amp; CRUD</h2>
+  <p class="big">A table is a spreadsheet with strict rules: fixed columns, each with a type that refuses the wrong kind of data.</p>
+
+  <h3>Your orders table</h3>
+<pre><code>CREATE TABLE orders (
+    id      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    symbol  text NOT NULL,
+    side    text NOT NULL,
+    qty     integer NOT NULL
+);</code></pre>
+  <div class="table-wrap"><table>
+    <tr><th>Piece</th><th>Meaning</th></tr>
+    <tr><td><code>bigint</code></td><td>A whole number with a very large range.</td></tr>
+    <tr><td><code>GENERATED ALWAYS AS IDENTITY</code></td><td>Postgres picks the id automatically (1, 2, 3…) from a <strong>sequence</strong> called <code>orders_id_seq</code>.</td></tr>
+    <tr><td><code>PRIMARY KEY</code></td><td>Uniquely identifies each row. No two rows can share an id.</td></tr>
+    <tr><td><code>text</code> / <code>integer</code></td><td>Text of any length / a whole number.</td></tr>
+    <tr><td><code>NOT NULL</code></td><td>The column must have a value.</td></tr>
+  </table></div>
+
+  <h3>The four CRUD commands</h3>
+<pre><code><span class="c">-- Create: add rows (Postgres fills in the id)</span>
+INSERT INTO orders (symbol, side, qty) VALUES ('AAPL', 'buy', 10);
+INSERT INTO orders (symbol, side, qty) VALUES ('TSLA', 'sell', 5), ('MSFT', 'buy', 20);
+
+<span class="c">-- Read: look at rows</span>
+SELECT * FROM orders;
+SELECT * FROM orders WHERE side = 'buy';
+SELECT symbol, qty FROM orders WHERE qty >= 10 ORDER BY id;
+SELECT count(*) FROM orders;
+
+<span class="c">-- Update: change rows</span>
+UPDATE orders SET symbol = 'AAPL' WHERE id = 1;
+
+<span class="c">-- Delete: remove rows</span>
+DELETE FROM orders WHERE id = 2;</code></pre>
+
+  <h3>The shape of each command</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Command</th><th>Pattern</th></tr>
+    <tr><td>INSERT</td><td><code>INSERT INTO table (cols) VALUES (vals);</code> Use <code>VALUES</code>, not <code>=</code>.</td></tr>
+    <tr><td>SELECT</td><td><code>SELECT columns FROM table WHERE condition ORDER BY col;</code> <em>What</em> goes before FROM, <em>where from</em> goes after.</td></tr>
+    <tr><td>UPDATE</td><td><code>UPDATE table SET column = new_value WHERE condition;</code> Column on the left.</td></tr>
+    <tr><td>DELETE</td><td><code>DELETE FROM table WHERE condition;</code></td></tr>
+  </table></div>
+
+  <h3>Quotes: the rule that catches everyone</h3>
+  <div class="vs">
+    <div class="good"><h4>'single' = a value</h4><p><code>'AAPL'</code> is a piece of text.</p></div>
+    <div class="bad"><h4>"double" = a name</h4><p><code>"AAPL"</code> means a column called AAPL, so you get <code>column "AAPL" does not exist</code>.</p></div>
+  </div>
+  <p><strong>Single quotes are for strings.</strong> Write numbers without quotes: <code>5</code>, not <code>'5'</code>.</p>
+
+  <div class="callout danger"><span class="label">UPDATE or DELETE without WHERE</span>
+    <p>This changes <strong>every row</strong>, with no warning. To protect yourself: (1) run a <code>SELECT</code> with the same <code>WHERE</code> first, to see which rows would change; (2) wrap risky changes in <code>BEGIN</code> … <code>ROLLBACK</code>/<code>COMMIT</code>.</p>
+  </div>
+
+  <h3>Ids identify rows; they don’t count them</h3>
+  <p>The sequence only moves forward. Deleted rows leave gaps (TSLA’s id 2 is gone forever), and even <strong>failed inserts</strong> use up an id (the rejected qty-0 order took id 8). This stops old references from pointing at the wrong order, and it’s fast when many workers insert at once. To count orders, use <code>count(*)</code>.</p>
+
+  <h3>Row order isn’t guaranteed</h3>
+  <p>Without <code>ORDER BY</code>, Postgres returns rows in whatever order is fastest. Order 1 came out last because each <code>UPDATE</code> writes a <strong>new version</strong> of the row (MVCC). If the order matters, always use <code>ORDER BY</code>.</p>
+</section>
+
+<!-- 07 -->
+<section id="constraints">
+  <p class="sec-num">07</p>
+  <h2>Constraints</h2>
+  <p class="big">Types catch the wrong <em>kind</em> of data. Constraints catch wrong <em>values</em>: −5 shares, a side of “banana”.</p>
+<pre><code>ALTER TABLE orders ADD CONSTRAINT qty_positive CHECK (qty > 0);
+ALTER TABLE orders ADD CONSTRAINT side_valid  CHECK (side IN ('buy', 'sell'));
+ALTER TABLE orders RENAME CONSTRAINT old_name TO new_name;</code></pre>
+  <ul>
+    <li><strong>Why in the database and not only in Python:</strong> many writers (workers, API, signal generator) are protected by one rule, and it can’t be skipped by a bug.</li>
+    <li><strong>Postgres checks existing rows first.</strong> If any row breaks the rule, it refuses to add the constraint (<code>is violated by some row</code>). A guarantee with exceptions isn’t a guarantee.</li>
+    <li><strong>Name constraints clearly.</strong> The name appears in errors: <code>violates check constraint "qty_positive"</code>.</li>
+    <li>In Python, a violation raises an exception (<code>psycopg.errors.CheckViolation</code>), so the bug is loud instead of silent.</li>
+  </ul>
+  <div class="callout analogy"><span class="label">Analogy</span>
+    <p>Python checks are the bouncer at the door. A constraint is the locked vault.</p>
+  </div>
+</section>
+
+<!-- 08 -->
+<section id="transactions">
+  <p class="sec-num">08</p>
+  <h2>Transactions</h2>
+  <p class="big">A transaction groups several statements into one unit: all of them happen, or none do.</p>
+<pre><code>BEGIN;                         <span class="c">-- start (prompt becomes engine=*#)</span>
+UPDATE orders SET qty = 999;   <span class="c">-- you see 999…</span>
+ROLLBACK;                      <span class="c">-- …and it's undone: back to 10, 20, 3</span>
+
+BEGIN;
+UPDATE orders SET qty = 50 WHERE id = 1;
+COMMIT;                        <span class="c">-- permanent</span></code></pre>
+  <div class="table-wrap"><table>
+    <tr><th>Situation</th><th>Result</th></tr>
+    <tr><td>Changes after <code>BEGIN</code>, then <code>ROLLBACK</code></td><td>All undone.</td></tr>
+    <tr><td>Anything already <code>COMMIT</code>ted</td><td><strong>Permanent.</strong> ROLLBACK can never undo it.</td></tr>
+    <tr><td>Worker crashes before <code>COMMIT</code></td><td>Postgres notices the dropped connection and <strong>rolls back automatically</strong>.</td></tr>
+    <tr><td>Statement without <code>BEGIN</code></td><td><strong>Autocommit</strong>: it’s its own transaction, committed straight away.</td></tr>
+  </table></div>
+  <div class="callout ddia"><span class="label">DDIA · Ch. 7 · ACID</span>
+    <p><strong>Atomicity</strong>: all or nothing. Kleppmann says it would be better named “abortability”. <strong>Durability</strong>: once COMMIT returns, the data survives crashes and power loss.</p>
+  </div>
+  <div class="callout analogy"><span class="label">Analogy</span>
+    <p>A bank transfer: “take ₹500 from A” and “add ₹500 to B” must happen together, or the money disappears.</p>
+  </div>
+</section>
+
+<!-- 09 -->
+<section id="isolation">
+  <p class="sec-num">09</p>
+  <h2>Isolation &amp; locks</h2>
+  <p class="big">What happens when two connections touch the same data at the same time? You tested it with two terminals.</p>
+
+  <h3>Experiment: who can see uncommitted changes?</h3>
+  <p>Terminal A ran <code>BEGIN; UPDATE … qty = 50</code>. Terminal B still saw <strong>10</strong>. After A’s <code>COMMIT</code>, B saw <strong>50</strong>.</p>
+
+  <h3>Experiment: both update the same row</h3>
+  <p>A updated order 1 to 60 without committing. B’s update to 70 <strong>froze</strong>. It waited for A’s <strong>row lock</strong>. The moment A committed, B continued, and the final value was <strong>70</strong>: the last writer wins.</p>
+
+  <div class="callout ddia"><span class="label">DDIA · Ch. 7 · Read Committed (Postgres’s default)</span>
+    <p><strong>No dirty reads:</strong> you never see another transaction’s uncommitted data.<br><strong>No dirty writes:</strong> you can’t overwrite uncommitted data; you wait for its row lock.</p>
+  </div>
+  <ul>
+    <li>Locks are on <strong>rows</strong>, not tables. Workers only wait when they touch the same row.</li>
+    <li>Locks are held until <strong>COMMIT or ROLLBACK</strong>, so keep transactions short.</li>
+    <li>A plain <code>SELECT</code> takes <strong>no lock</strong>.</li>
+    <li><strong>MVCC:</strong> an UPDATE writes a new version of the row. That’s how B could keep reading the old committed version while A worked.</li>
+  </ul>
+</section>
+
+<!-- 10 -->
+<section id="python">
+  <p class="sec-num">10</p>
+  <h2>Python ↔ Postgres</h2>
+
+  <h3>Setup</h3>
+<pre><code>python3 -m venv .venv                         <span class="c"># create a private package folder</span>
+source .venv/bin/activate                     <span class="c"># turn it on: prompt shows (.venv)</span>
+pip install "psycopg[binary]" python-dotenv   <span class="c"># install the libraries</span>
+echo ".venv" >> .gitignore                    <span class="c"># never upload it</span></code></pre>
+  <div class="table-wrap"><table>
+    <tr><th>Tool</th><th>What it is</th></tr>
+    <tr><td><strong>venv</strong></td><td>A folder of Python packages for this project only. It is <em>not</em> like a Docker container: there’s no isolation of processes or the network.</td></tr>
+    <tr><td><strong>pip</strong></td><td>Installs packages into the active venv.</td></tr>
+    <tr><td><strong>psycopg</strong></td><td>The library that connects Python to Postgres.</td></tr>
+    <tr><td><strong>python-dotenv</strong></td><td>Reads <code>.env</code> into environment variables.</td></tr>
+  </table></div>
+  <div class="callout"><span class="label">Every new terminal</span>
+    <p>Run <code>source .venv/bin/activate</code> again. Without it you get <code>ModuleNotFoundError: No module named 'psycopg'</code>, which is exactly what happened in your second terminal.</p>
+  </div>
+
+  <h3>Your first script: <code>hello_db.py</code></h3>
+<pre><code>import os
+import psycopg
+from dotenv import load_dotenv
+
+load_dotenv()                                   # .env → environment variables
+password = os.environ["POSTGRES_PASSWORD"]      # look up by its label, never hard-code
+
+url = f"postgresql://engine:{password}@127.0.0.1:5432/engine"
+
+with psycopg.connect(url) as conn:              # closes automatically
+    rows = conn.execute("SELECT * FROM orders ORDER BY id").fetchall()
+    for row in rows:
+        print(row)                              # (1, 'AAPL', 'buy', 70)</code></pre>
+
+  <h3>Connection string</h3>
+<pre><code>postgresql://USER:PASSWORD@HOST:PORT/DATABASE</code></pre>
+  <div class="table-wrap"><table>
+    <tr><th>Thing</th><th>What it is</th><th>Your value</th></tr>
+    <tr><td><strong>Volume</strong></td><td>Disk storage. Only Docker knows about it.</td><td><code>exec-engine_pgdata</code></td></tr>
+    <tr><td><strong>Database</strong></td><td>The named database <em>inside</em> Postgres that you connect to.</td><td><code>engine</code></td></tr>
+    <tr><td><strong>SQL</strong></td><td>The instruction you send.</td><td><code>SELECT * FROM orders</code></td></tr>
+  </table></div>
+  <div class="callout analogy"><span class="label">Analogy</span>
+    <p>The volume is the filing cabinet, the database is the folder inside it, and SQL is the request: “show me every page in the orders section”.</p>
+  </div>
+
+  <h3>psycopg pieces</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Code</th><th>Meaning</th></tr>
+    <tr><td><code>conn.execute("SQL")</code></td><td>Sends one statement.</td></tr>
+    <tr><td><code>.fetchall()</code></td><td>Every result row, as a list of tuples.</td></tr>
+    <tr><td><code>.fetchone()[0]</code></td><td>One row, like <code>(70,)</code>, then its first value: <code>70</code>.</td></tr>
+    <tr><td><code>"... qty = %s ...", (value,)</code></td><td>A <strong>placeholder</strong>. psycopg inserts the value safely. Always pass a tuple; one item needs a trailing comma.</td></tr>
+  </table></div>
+  <div class="callout danger"><span class="label">SQL injection</span>
+    <p>Never build SQL with f-strings, like <code>f"... qty = {x}"</code>. If a value ever comes from a user, they can inject their own SQL. Always use <code>%s</code>.</p>
+  </div>
+  <p><strong>Python indentation:</strong> each block (<code>with:</code>, <code>for:</code>) adds 4 spaces for the lines inside it. <strong>Reading tracebacks:</strong> when SQL fails inside Python, the last lines show Postgres’s own message with the same <code>^</code> arrow as psql.</p>
+</section>
+
+<!-- 11 -->
+<section id="lost-update">
+  <p class="sec-num">11</p>
+  <h2>The lost update</h2>
+  <p class="big">The bug your whole engine exists to prevent. You caused it yourself.</p>
+
+  <h3>Read-modify-write</h3>
+<pre><code>with psycopg.connect(url) as conn:
+    qty = conn.execute("SELECT qty FROM orders WHERE id = 1").fetchone()[0]   # 1. read
+    time.sleep(5)
+    new_qty = qty + 10                                                        # 2. modify in Python
+    conn.execute("UPDATE orders SET qty = %s WHERE id = 1", (new_qty,))       # 3. write</code></pre>
+  <p>Two scripts ran at once:</p>
+<pre class="timeline"><code>          Script A               Script B              DB qty
+t=0s      read 80                                        80
+t=1s                             read 80                 80
+t=5s      write 80+10 = 90                               90
+t=6s                             write 80+10 = 90        90   ← A's +10 is lost</code></pre>
+  <p>It should have been 100. B calculated from a value that was <strong>already out of date</strong>. The plain <code>SELECT</code> took no lock, so both scripts read 80.</p>
+  <div class="callout ddia"><span class="label">DDIA · Ch. 7 · Preventing lost updates</span>
+    <p>Read Committed does <strong>not</strong> prevent lost updates. You need an atomic operation or explicit locking.</p>
+  </div>
+  <div class="callout danger"><span class="label">In your engine</span>
+    <p>Replace “+10” with “status is pending → call Alpaca → mark done”. If two workers both read <code>pending</code>, <strong>both send the order, and you buy twice.</strong></p>
+  </div>
+
+  <h3>Fix 1: atomic update <span class="tag ok">Tested ✓</span></h3>
+<pre><code>UPDATE orders SET qty = qty + 10 WHERE id = 1</code></pre>
+  <p>The maths happens inside Postgres, under the row lock, with no gap between read and write. Your two-terminal result: 90 → <strong>110</strong>, so both additions counted.</p>
+
+  <h3>Fix 2: <code>SELECT … FOR UPDATE</code> <span class="tag ok">Tested ✓</span></h3>
+<pre><code>SELECT qty FROM orders WHERE id = 1 FOR UPDATE</code></pre>
+  <p>Used when the decision needs Python logic or a broker call, which can’t fit into one <code>UPDATE</code>. The <em>read</em> takes the row lock immediately, so a second worker waits until the first commits. Your result: A read 110 and wrote 120; B <strong>waited</strong>, read 120 and wrote 130.</p>
+<pre class="timeline"><code>A: SELECT … FOR UPDATE → 110   🔒 lock taken at the read
+B: SELECT … FOR UPDATE         ⏳ waits; can't read yet
+A: UPDATE to 120, COMMIT       🔓 lock released
+B:                     → 120   ← reads the NEW value
+B: UPDATE to 130, COMMIT</code></pre>
+  <div class="table-wrap"><table>
+    <tr><th>Question</th><th>Answer</th></tr>
+    <tr><td>How long is the lock held?</td><td>Until <strong>COMMIT or ROLLBACK</strong>, not just while the SELECT runs. A 30-second Alpaca call means at least 30 seconds of lock.</td></tr>
+    <tr><td>Does a <em>plain</em> SELECT wait for it?</td><td><strong>No.</strong> It reads the last committed value straight away (MVCC). Locks only block other lockers: UPDATE, DELETE, FOR UPDATE. You tested this.</td></tr>
+    <tr><td>So what’s the danger?</td><td>FOR UPDATE only protects you if <strong>every</strong> worker uses it. One plain SELECT walks past the lock, sees <code>pending</code>, and buys twice.</td></tr>
+    <tr><td>Atomic UPDATE or FOR UPDATE?</td><td>Atomic when the change fits in one SQL statement; FOR UPDATE when Python must read, decide and act.</td></tr>
+  </table></div>
+  <div class="callout"><span class="label">Next problem</span>
+    <p>With five workers all going for the same row, four sit waiting while other orders are ready. <code>SKIP LOCKED</code> says “if it’s locked, skip it and take the next one”. That’s Topic 5.</p>
+  </div>
+  <div class="callout analogy"><span class="label">Analogy</span>
+    <p>Without FOR UPDATE, two people read the last page of a shared notebook and both write on it. With it, you take the notebook while you read, and the other person waits.</p>
+  </div>
+</section>
+
+<!-- 12 -->
+<section id="queue">
+  <p class="sec-num">12</p>
+  <h2>The job queue: <code>SKIP LOCKED</code></h2>
+  <p class="big">A producer puts orders on a rail, and many workers take them off, each one exactly once, without waiting for each other. This is the core of the engine.</p>
+
+  <div class="callout analogy"><span class="label">Analogy</span>
+    <p>A restaurant kitchen. Order tickets hang on a rail. Each cook takes the oldest free ticket, cooks it, and spikes it as done. <strong>Nobody hands out tickets</strong>: every cook checks the rail for themselves. A ticket a cook is holding is invisible to the others.</p>
+  </div>
+
+<pre class="timeline"><code>signal_generator ──(1 order/sec)──▶ [ rail: status = 'pending' ] ◀── worker 1
+                                                                 ◀── worker 2
+            pending  ──▶  processing  ──▶  done
+          (on the rail)  (a cook has it)  (spiked)</code></pre>
+
+  <h3>Step 1 · A <code>status</code> column</h3>
+<pre><code>ALTER TABLE orders ADD COLUMN status text NOT NULL DEFAULT 'pending';</code></pre>
+  <div class="table-wrap"><table>
+    <tr><th>Piece</th><th>Meaning</th></tr>
+    <tr><td><code>ALTER TABLE</code></td><td>Change the structure of an existing table.</td></tr>
+    <tr><td><code>NOT NULL</code></td><td>Every row must have a value.</td></tr>
+    <tr><td><code>DEFAULT 'pending'</code></td><td>Used for new INSERTs that don’t give a status, <strong>and written into every row that already exists</strong>. That’s why NOT NULL didn’t fail on AAPL, MSFT and NVDA.</td></tr>
+  </table></div>
+  <p>You typed <code>satus</code>. Postgres doesn’t spell-check names, so it created that column happily. The fix keeps the data:</p>
+<pre><code>ALTER TABLE orders RENAME COLUMN satus TO status;</code></pre>
+
+  <h3>Step 2 · Allow only real statuses</h3>
+<pre><code>ALTER TABLE orders ADD CONSTRAINT status_valid
+  CHECK (status IN ('pending', 'processing', 'done'));</code></pre>
+  <p>Without it, a typo like <code>'finsihed'</code> would be stored, and no worker looking for <code>'done'</code> would ever see that row. You predicted <code>'finished'</code> would be written. It wasn’t:</p>
+<pre><code>ERROR:  new row for relation "orders" violates check constraint "status_valid"
+DETAIL:  Failing row contains (1, AAPL, buy, 130, finished).</code></pre>
+  <div class="table-wrap"><table>
+    <tr><th>Part</th><th>Meaning</th></tr>
+    <tr><td>new row</td><td>An UPDATE writes a <em>new version</em> of the row (MVCC). Postgres checks that version before saving it.</td></tr>
+    <tr><td>relation</td><td>Postgres’s word for a table.</td></tr>
+    <tr><td>"status_valid"</td><td>Which rule broke. Good constraint names make errors readable.</td></tr>
+    <tr><td>Result</td><td>The whole UPDATE was refused; AAPL stayed <code>pending</code>.</td></tr>
+  </table></div>
+
+  <h3>Step 3 · Claiming a job: <code>FOR UPDATE</code> vs <code>SKIP LOCKED</code> <span class="tag ok">Tested ✓</span></h3>
+<pre><code>BEGIN;
+SELECT id, symbol FROM orders
+WHERE status = 'pending'    -- only tickets on the rail
+ORDER BY id                 -- oldest first
+LIMIT 1                     -- just one
+FOR UPDATE SKIP LOCKED;     -- lock it; rows others have locked are invisible to me</code></pre>
+  <div class="table-wrap"><table>
+    <tr><th>Terminals (each did <code>BEGIN</code> first)</th><th><code>FOR UPDATE</code></th><th><code>FOR UPDATE SKIP LOCKED</code></th></tr>
+    <tr><td>A claims</td><td>AAPL</td><td>AAPL</td></tr>
+    <tr><td>B claims</td><td>⏳ <strong>freezes</strong> until A commits/rolls back</td><td>MSFT, instantly</td></tr>
+    <tr><td>C claims</td><td>⏳ freezes too</td><td>NVDA, instantly</td></tr>
+    <tr><td>D (all 3 rows locked)</td><td>⏳ freezes</td><td><code>(0 rows)</code>, instantly. It doesn’t wait or go back to id 1.</td></tr>
+  </table></div>
+  <p><strong>Why not plain FOR UPDATE?</strong> With 5 workers, worker 1 holds AAPL for a 3-second Alpaca call while workers 2–5 all queue up behind it, so only one is ever busy. SKIP LOCKED keeps every worker busy at the same time.</p>
+  <div class="callout danger"><span class="label">Your first try: both got AAPL</span>
+    <p>Terminal A wasn’t inside a transaction. Without <code>BEGIN</code>, psql autocommits, so the lock was taken and <strong>released the instant the SELECT finished</strong>. A lock only lives as long as its transaction. Check the prompt: <code>engine=#</code> means no transaction, and <code>engine=*#</code> means you’re inside one and holding locks.</p>
+  </div>
+
+  <h3>Forgotten transactions hold locks forever</h3>
+  <p>The next morning, your three terminals from the day before were still <code>idle in transaction</code>, so they were still locking all three rows. A worker started then would have seen <code>(0 rows)</code> forever and you wouldn’t have known why.</p>
+<pre><code>-- who is connected, and what are they doing?
+SELECT pid, state FROM pg_stat_activity WHERE datname = 'engine';
+
+-- kill the stuck ones (a killed connection = automatic ROLLBACK, nothing lost)
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+WHERE state = 'idle in transaction' AND datname = 'engine';</code></pre>
+  <p>It returned <code>t</code> three times, once for each killed session. The orders were still <code>pending</code>: those sessions had only locked the rows, and they hadn’t changed anything. Production databases set <code>idle_in_transaction_session_timeout</code> so this cleanup happens automatically.</p>
+
+  <h3>Step 4 &amp; 6 · <code>worker.py</code></h3>
+<pre><code>with psycopg.connect(url) as conn:
+    while True:
+        row = conn.execute("""
+            SELECT id, symbol FROM orders
+            WHERE status = 'pending'
+            ORDER BY id
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+        """).fetchone()                  # a tuple, or None if 0 rows
+
+        if row is None:
+            conn.commit()                # close the empty transaction
+            print("nothing to do")
+            time.sleep(1)
+            continue                     # back to the top of the loop
+
+        order_id, symbol = row           # unpack (66, 'TSLA')
+        print("claimed", order_id, symbol)
+        time.sleep(2)                    # pretend: send to Alpaca
+        conn.execute("UPDATE orders SET status = 'done' WHERE id = %s", (order_id,))
+        conn.commit()                    # save 'done' AND release the lock
+        print("done", order_id)</code></pre>
+  <div class="table-wrap"><table>
+    <tr><th>Question</th><th>Answer</th></tr>
+    <tr><td>Why <code>'pending'</code> in single quotes?</td><td>Without quotes, SQL treats <code>pending</code> as a <em>column name</em>: <code>column "pending" does not exist</code>. In double quotes it’s also a column name. Values always go in single quotes.</td></tr>
+    <tr><td>Why <code>os.environ["…"]</code> and not <code>.get()</code>?</td><td><code>.get</code> quietly returns <code>None</code> if <code>.env</code> is missing, which gives a confusing auth error later. <code>[...]</code> fails loudly with <code>KeyError</code>. In an engine, <strong>fail loudly</strong>.</td></tr>
+    <tr><td>Why commit when the rail is empty? There’s nothing to save.</td><td>psycopg runs <code>BEGIN</code> before the first query, <em>even a SELECT</em>. The commit isn’t saving anything; it’s <strong>closing the transaction</strong>. Otherwise it stays open for hours (<code>idle in transaction</code>), blocks MVCC cleanup (bloat) and can be killed by timeouts. <code>rollback()</code> would do the same thing here. Think of an open bar tab with nothing ordered: you still close it.</td></tr>
+    <tr><td>Why commit after the UPDATE?</td><td>It makes <code>done</code> permanent <strong>and releases the row lock</strong>. Rule: <strong>one job = one transaction</strong>.</td></tr>
+    <tr><td>During the 2-second sleep, what does a plain SELECT show?</td><td><code>pending</code>. You predicted <code>done</code>. The UPDATE hasn’t even run yet, and even after it runs, readers only see <strong>committed</strong> data.</td></tr>
+    <tr><td>Who wakes a sleeping worker when a new order arrives?</td><td>Nobody. It wakes itself on a timer and checks again. This is <strong>polling</strong> (a <em>pull</em> model). Whichever worker checks first gets the order. If a worker dies, the others simply keep pulling. (<code>LISTEN/NOTIFY</code> can add a “wake up” signal later.)</td></tr>
+    <tr><td>Running on Linux: how do I start it?</td><td><code>.venv/bin/python worker.py</code>, or <code>source .venv/bin/activate</code> first. <code>.venv\bin\activate</code> is Windows style; on Linux the backslashes simply disappear.</td></tr>
+  </table></div>
+
+  <h3>Step 5 · <code>signal_generator.py</code>: commit first, then announce <span class="tag ok">Tested ✓</span></h3>
+<pre><code>SYMBOLS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN"]
+
+with psycopg.connect(url) as conn:
+    while True:
+        symbol = random.choice(SYMBOLS)
+        side = random.choice(['buy', 'sell'])
+        qty = random.randint(1, 10)          # 1..10, both included
+        conn.execute(
+            "INSERT INTO orders (symbol, side, qty) VALUES (%s, %s, %s)",
+            (symbol, side, qty),
+        )                                    # status comes from DEFAULT
+        conn.commit()                        # ← the line you added
+        print("new order:", symbol, side, qty)
+        time.sleep(1)</code></pre>
+<pre class="timeline"><code>Without conn.commit():
+  BEGIN ─ INSERT ─ INSERT ─ … 15 inserts … ─ Ctrl+C 💥 ─ ROLLBACK
+  psql saw:        nothing (uncommitted)
+  after Ctrl+C:    nothing (rolled back), and ids 5–19 burned forever
+  the prints:      lied. "new order" appeared 15 times, and none were saved.
+
+With conn.commit() after each INSERT:
+  visible to workers immediately, survives Ctrl+C, first new id = 20</code></pre>
+  <div class="callout"><span class="label">Rule</span>
+    <p><strong>“I ran the INSERT” is not the same as “it’s saved”.</strong> It’s saved once it’s committed. And put the commit <em>before</em> the log line, so your logs never claim something the database doesn’t have.</p>
+  </div>
+
+  <h3>The full run: 2 workers + generator <span class="tag ok">Tested ✓</span></h3>
+<pre><code>.venv/bin/python -u worker.py | tee w1.log    # T1   (-u = print immediately; tee = screen + file)
+.venv/bin/python -u worker.py | tee w2.log    # T2
+.venv/bin/python signal_generator.py          # T3</code></pre>
+  <div class="table-wrap"><table>
+    <tr><th>Check</th><th>Result</th></tr>
+    <tr><td>Orders claimed</td><td>46</td></tr>
+    <tr><td>ids in <strong>both</strong> logs</td><td><strong>0</strong></td></tr>
+    <tr><td>Worker 1</td><td>20, 22, 24 … 64 (the even ones)</td></tr>
+    <tr><td>Worker 2</td><td>21, 23, 25 … 63 (the odd ones)</td></tr>
+    <tr><td>Speed</td><td>2 workers × ½ order/sec = 1/sec, the same as the generator, so the backlog stayed flat (you predicted this ✓). Once the generator stopped, the workers emptied the rail.</td></tr>
+  </table></div>
+
+  <h3>Step 7 · The crash 💥 <span class="tag ok">Tested ✓</span></h3>
+<pre class="timeline"><code>claim 66 🔒 → sleep → 💥 kill -9 → connection drops → Postgres auto-ROLLBACK
+         → 66 is 'pending' and unlocked → the restarted worker claims 66 again</code></pre>
+  <div class="table-wrap"><table>
+    <tr><th></th><th>Ctrl+C</th><th><code>kill -9</code> (<code>pkill -9 -f worker.py</code>)</th></tr>
+    <tr><td>What happens</td><td>Python raises <code>KeyboardInterrupt</code></td><td>The OS destroys the process instantly</td></tr>
+    <tr><td>Who rolls back</td><td>Python: the <code>with</code> block exits on the exception</td><td><strong>Postgres</strong>: it notices the connection is gone</td></tr>
+    <tr><td>Output</td><td>A traceback</td><td>Just <code>Killed</code></td></tr>
+    <tr><td>Real-world version</td><td>An operator stopping it</td><td>Power cut, out of memory, server crash</td></tr>
+  </table></div>
+  <p>Your first two “kills” were actually Ctrl+C (the traceback gave it away). The real <code>kill -9</code> proved the important part: <strong>safety lives in the database, not in your Python code.</strong> A crashed server can’t run a <code>with</code> block, but Postgres still cleans up.</p>
+
+  <div class="callout danger"><span class="label">The problem the rest of the project solves</span>
+<pre class="timeline"><code>worker 1:  claim NVDA → send "BUY 10 NVDA" to Alpaca ✅ executed → 💥 dies before COMMIT
+database:  NVDA still 'pending'
+worker 2:  claims NVDA → sends "BUY 10 NVDA" again → you own 20, not 10</code></pre>
+  </div>
+  <div class="table-wrap"><table>
+    <tr><th>Guarantee</th><th>Meaning</th><th>Your engine</th></tr>
+    <tr><td>At-most-once</td><td>Never repeats, but can lose jobs</td><td>✗ Bad for trading</td></tr>
+    <tr><td><strong>At-least-once</strong></td><td>Never loses, but can repeat after a crash</td><td>✓ <strong>Where you are now</strong></td></tr>
+    <tr><td>Exactly-once (effectively)</td><td>Never loses, never repeats</td><td>🎯 The goal: at-least-once delivery plus an <strong>idempotency key</strong> that Alpaca remembers</td></tr>
+  </table></div>
+  <div class="callout"><span class="label">Next · Topic 6</span>
+    <p>The worker holds one transaction open during the Alpaca call. That means (1) nobody can see the order is being worked on, since it still looks <code>pending</code>, and (2) a long call holds a lock and a connection the whole time. The fix is to claim and commit <code>processing</code> quickly, do the work outside the transaction, and use a <strong>lease</strong> (a deadline) so that if a worker dies, its job comes back after the lease expires.</p>
+  </div>
+  <div class="callout"><span class="label">To-do · optional break-it you asked to be reminded about</span>
+    <p>Delete the <code>conn.commit()</code> in the empty-rail branch, run the worker with nothing pending, and check <code>SELECT pid, state FROM pg_stat_activity WHERE datname = 'engine';</code>. Predict the state first.</p>
+  </div>
+  <div class="callout ddia"><span class="label">DDIA · Ch. 11 · Message brokers</span>
+    <p>“Acknowledgments and redelivery”: a broker only removes a message once the consumer acknowledges it, and redelivers it if the consumer dies. Your <code>COMMIT</code> is the acknowledgment, and the auto-ROLLBACK is the redelivery. DDIA calls a pool of consumers sharing the work “load balancing”: that’s your two workers.</p>
+  </div>
+</section>
+
+<!-- 13 -->
+<section id="gotchas">
+  <p class="sec-num">13</p>
+  <h2>Mistakes you made, and the fixes</h2>
+  <p>These are the most valuable notes on the page. Each one is a mistake you’re now unlikely to make again.</p>
+
+  <div class="callout danger"><span class="label">Revise these · flagged 27 Oct · updated 28 Oct</span>
+    <p><strong>1. “A plain SELECT waits for FOR UPDATE.” ✗</strong> <span class="tag ok">Answered right from memory 28 Oct</span> You had this right on 26 Oct and lost it overnight. <strong>Locks only block other lockers. Readers never wait.</strong> A lock is a “reserved” sign on a library book: someone who wants to <em>take it out</em> (<code>FOR UPDATE</code>, <code>UPDATE</code>, <code>DELETE</code>) waits until COMMIT/ROLLBACK, but someone who only wants to <em>look at it</em> (a plain <code>SELECT</code>) reads straight away and sees the last <strong>committed</strong> version (MVCC).</p>
+    <table>
+      <tr><th>A holds <code>FOR UPDATE</code> on row 1, then…</th><th>Result</th></tr>
+      <tr><td>B: <code>SELECT qty … WHERE id = 1</code></td><td>Returns immediately (the old committed value)</td></tr>
+      <tr><td>C: <code>SELECT qty … WHERE id = 1 FOR UPDATE</code></td><td>Waits until A commits, then reads A’s new value</td></tr>
+      <tr><td>D: <code>UPDATE orders … WHERE id = 1</code></td><td>Waits until A commits</td></tr>
+    </table>
+    <p><em>Why it matters:</em> if even one worker uses a plain SELECT, it reads past the lock and the lost update comes back. <strong>Every</strong> worker has to lock.</p>
+    <p><strong>2. “127.0.0.1 because ufw has security rules / expose as little as possible.” ⚠️ outcome, not mechanism.</strong> <span class="tag">Missed 3 times · still open</span> On 28 Oct you said “it connects locally via SSH, which we forward”: that’s <em>how you reach it</em>, not <em>why</em>. Memorise the three parts: <strong>Docker’s rules come first → ufw is bypassed → 127.0.0.1 = local only.</strong> The <em>mechanism</em>: <strong>Docker writes its own iptables rules, and they run before ufw’s.</strong> So <code>"5432:5432"</code> is open to the whole network <em>even if ufw blocks 5432</em>. <code>"127.0.0.1:5432:5432"</code> binds to loopback, so only the server itself can connect, and you reach it from elsewhere through an SSH tunnel.</p>
+    <p><em>Interview line:</em> “Docker’s published ports bypass ufw because Docker inserts its iptables rules ahead of ufw’s chains, so I bind to 127.0.0.1 and tunnel in over SSH.”</p>
+  </div>
+
+  <div class="gotchas">
+    <div class="gotcha"><span class="what">Plain <code>SELECT</code> waits for <code>FOR UPDATE</code></span><span class="fix">No. Only other lockers wait; readers see the last committed value. <span class="tag">Revise</span></span></div>
+    <div class="gotcha"><span class="what">“Bind to 127.0.0.1 because ufw…”</span><span class="fix">Mechanism: Docker’s iptables rules run <em>before</em> ufw, so ufw can’t block a published port. <span class="tag">Revise</span></span></div>
+    <div class="gotcha"><span class="what">Reused the name <code>side_valid</code> for the status check</span><span class="fix">Constraint names must be unique per table: <code>constraint "side_valid" already exists</code>. Use <code>status_valid</code>.</span></div>
+    <div class="gotcha"><span class="what"><code>IN ("rail","cook","spiked states")</code></span><span class="fix">Two mistakes: double quotes mean column names, and those were the <em>analogy</em> words. The values are <code>'pending'</code>, <code>'processing'</code>, <code>'done'</code>.</span></div>
+    <div class="gotcha"><span class="what"><code>WHERE status = pending</code> / <code>SET status = done</code></span><span class="fix">With no quotes, it’s a column name. Values go in single quotes: <code>'pending'</code>. (This is the third time a quoting mistake has come up; check every SQL value.)</span></div>
+    <div class="gotcha"><span class="what">Two-terminal test where both got AAPL</span><span class="fix">Terminal A had no <code>BEGIN</code>, so it autocommitted and released the lock instantly. Check for the <code>=*#</code> prompt before testing locks.</span></div>
+    <div class="gotcha"><span class="what">Left 3 psql terminals open overnight in a transaction</span><span class="fix">They held locks on every row. Always <code>ROLLBACK;</code> or <code>\q</code> when you’re done. Find them with <code>pg_stat_activity</code> and kill them with <code>pg_terminate_backend</code>.</span></div>
+    <div class="gotcha"><span class="what"><code>dataname</code></span><span class="fix">The column is <code>datname</code>. An odd Postgres spelling, but names must match exactly.</span></div>
+    <div class="gotcha"><span class="what"><code>os.environ.get("POSTGRES_PASSWORD")</code></span><span class="fix">Returns <code>None</code> silently. Use <code>os.environ["…"]</code> so a missing <code>.env</code> fails loudly.</span></div>
+    <div class="gotcha"><span class="what"><code>.venv\bin\activate</code> on the Linux server</span><span class="fix">That’s Windows style. On Linux: <code>source .venv/bin/activate</code>, or run <code>.venv/bin/python</code> directly.</span></div>
+    <div class="gotcha"><span class="what">Predicted uncommitted INSERTs would be visible</span><span class="fix">Other sessions only see committed data, and Ctrl+C rolled back all 15. Commit after each insert, <em>before</em> the print.</span></div>
+    <div class="gotcha"><span class="what">Predicted a plain SELECT shows <code>done</code> during the worker’s sleep</span><span class="fix">It shows <code>pending</code>: the UPDATE hadn’t run yet, and readers only see committed data.</span></div>
+    <div class="gotcha"><span class="what">Worker without <code>while True:</code></span><span class="fix"><code>continue</code> outside a loop is a <code>SyntaxError</code>. Everything inside the loop needs 4 more spaces of indentation.</span></div>
+    <div class="gotcha"><span class="what">Used Ctrl+C for the “kill -9” test</span><span class="fix">The traceback gives it away. Ctrl+C means Python cleans up; <code>kill -9</code> means only Postgres can. Use <code>pkill -9 -f worker.py</code>.</span></div>
+    <div class="gotcha"><span class="what"><code>ADD COLUMN satus</code> (typo)</span><span class="fix">Postgres doesn’t spell-check names. Fixed with <code>ALTER TABLE orders RENAME COLUMN satus TO status;</code>, which keeps the data.</span></div>
+    <div class="gotcha"><span class="what">Thought <code>-d</code> missing meant the container stopped</span><span class="fix">It’s running; your terminal just shows its logs. <span class="tag ok">Fixed</span></span></div>
+    <div class="gotcha"><span class="what"><code>{{json.Mounts}}</code> → template error</span><span class="fix">A space is needed: <code>{{json .Mounts}}</code>. <code>json</code> is a function and <code>.Mounts</code> is its argument.</span></div>
+    <div class="gotcha"><span class="what"><code>-v NAME:scratomusdata</code></span><span class="fix">The left side is your volume name; the right side is the path inside the container (<code>/var/lib/postgresql</code>).</span></div>
+    <div class="gotcha"><span class="what">Mount path in the top-level <code>volumes:</code></span><span class="fix">name:path goes inside the service; the top level only lists names.</span></div>
+    <div class="gotcha"><span class="what">Only the path, no name: <code>- /var/lib/postgresql</code></span><span class="fix">This creates an anonymous volume, the Experiment A problem again. Look for <code>source: pgdata</code> in the config output.</span></div>
+    <div class="gotcha"><span class="what"><code>-pgdata</code> (twice)</span><span class="fix">A list item needs a dash and a space: <code>- pgdata:…</code>.</span></div>
+    <div class="gotcha"><span class="what"><code>healthcheck:</code> at the top level</span><span class="fix">It belongs inside <code>db:</code>, indented like <code>ports:</code>.</span></div>
+    <div class="gotcha"><span class="what">Pasted <code>docker compose config</code> output containing the password</span><span class="fix">Use <code>--no-interpolate</code> when you share output. The password was rotated.</span></div>
+    <div class="gotcha"><span class="what">Thought the health check helps data survive</span><span class="fix">Volume = survival. Health check = readiness.</span></div>
+    <div class="gotcha"><span class="what"><code>SET symbol = "AAPL"</code></span><span class="fix">Double quotes mean a column name. Use <code>'AAPL'</code>. <span class="tag ok">Fixed</span></span></div>
+    <div class="gotcha"><span class="what"><code>INSERT … (cols) = (vals)</code></span><span class="fix">INSERT uses <code>VALUES</code>; <code>=</code> belongs in SET and WHERE.</span></div>
+    <div class="gotcha"><span class="what"><code>ADD CONSTRAINTS</code></span><span class="fix">Singular: <code>ADD CONSTRAINT</code>.</span></div>
+    <div class="gotcha"><span class="what">Thought old rows would be ignored when adding a constraint</span><span class="fix">Postgres checks every existing row and refuses if any break the rule.</span></div>
+    <div class="gotcha"><span class="what">Missing <code>;</code> before the next statement</span><span class="fix">psql joined them, so the DELETE never ran. Watch for <code>engine-#</code>.</span></div>
+    <div class="gotcha"><span class="what">“ROLLBACK reverts committed changes”</span><span class="fix">ROLLBACK only undoes <strong>uncommitted</strong> changes. Committed means permanent (durability). <span class="tag ok">Re-checked ✓</span></span></div>
+    <div class="gotcha"><span class="what">Used the volume name as the database name and as the SQL</span><span class="fix">Volume = disk storage (Docker’s concern). Database = <code>engine</code>. SQL = the instruction.</span></div>
+    <div class="gotcha"><span class="what"><code>SELECT * FROM orders qty WHERE id = 1</code></span><span class="fix">A word after the table name is an alias. Columns go between SELECT and FROM: <code>SELECT qty FROM orders …</code>. It was valid SQL, but wrong.</span></div>
+    <div class="gotcha"><span class="what">Leftover <code>qty</code> / <code>new_qty</code> after removing their lines</span><span class="fix">NameError at runtime. <code>py_compile</code> only checks grammar, so no error doesn’t mean correct.</span></div>
+  </div>
+</section>
+
+<!-- 14 -->
+<section id="interview">
+  <p class="sec-num">14</p>
+  <h2>Interview answers</h2>
+  <p>Try each one out loud before opening it.</p>
+
+  <details class="qa"><summary>Your database runs in Docker. How do orders survive a container restart, and who can connect?</summary>
+    <div class="ans"><p>“Postgres stores its data on a named Docker volume mounted at its data directory, so I can destroy and re-create the container without losing anything. I publish the port only on 127.0.0.1, because Docker’s port rules bypass ufw, so a plain 5432:5432 would expose the database to the whole network. If I need access from another machine, I use an SSH tunnel instead of opening the port.”</p></div></details>
+
+  <details class="qa"><summary>What’s the difference between an image and a container?</summary>
+    <div class="ans"><p>“An image is a read-only template; a container is a running instance of it. One image can start many identical containers, which is how I’ll run several workers.”</p></div></details>
+
+  <details class="qa"><summary>Why is mounting a volume at the wrong path dangerous?</summary>
+    <div class="ans"><p>“It fails silently. The app writes to its real data directory, not the volume, so the volume stays empty. Everything works until the container is re-created, and then the data is gone.”</p></div></details>
+
+  <details class="qa"><summary>Why put constraints in the database if Python already validates?</summary>
+    <div class="ans"><p>“Many writers share one table, and a constraint protects all of them and can’t be skipped by a bug. A violation raises an exception, so bad data is loud instead of silently stored.”</p></div></details>
+
+  <details class="qa"><summary>What happens if a worker crashes in the middle of a transaction?</summary>
+    <div class="ans"><p>“Nothing it wrote is kept. Postgres sees the connection drop and rolls back the open transaction, so there’s never half-finished state. Anything committed earlier stays, because commits are durable.”</p></div></details>
+
+  <details class="qa"><summary>What is a dirty read? Does Postgres allow it?</summary>
+    <div class="ans"><p>“Reading another transaction’s uncommitted data. Postgres’s default, Read Committed, never allows it. It also prevents dirty writes: a second writer waits for the first one’s row lock.”</p></div></details>
+
+  <details class="qa"><summary>What is a lost update, and how do you prevent it?</summary>
+    <div class="ans"><p>“Two transactions read the same value, both modify it in application code, and the second write overwrites the first, so one change disappears. Read Committed doesn’t stop it. Fix it with an atomic update like SET qty = qty + 10 when the logic fits in SQL, or SELECT … FOR UPDATE to lock the row at read time when it doesn’t.”</p></div></details>
+
+  <details class="qa"><summary>Why are there gaps in the ids?</summary>
+    <div class="ans"><p>“Identity columns use a sequence that only moves forward. (In Topic 5, 15 rolled-back inserts burned ids 5–19, so the next order got id 20.) Deletes and even failed inserts consume numbers. That avoids reusing an id that something might still reference, and lets concurrent inserts proceed without coordination. Ids identify rows; count(*) counts them.”</p></div></details>
+
+  <h3>Topic 5 · The job queue</h3>
+
+  <details class="qa"><summary>How would you build a job queue in Postgres?</summary>
+    <div class="ans"><p>“A table of jobs with a status column, constrained to pending, processing or done. Producers insert pending rows and commit straight away. Each worker loops: it claims the oldest pending row with <code>SELECT … ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED</code>, does the work, marks it done and commits, which also releases the lock. If nothing is free, it sleeps briefly and polls again.”</p></div></details>
+
+  <details class="qa"><summary>Why <code>SKIP LOCKED</code> instead of plain <code>FOR UPDATE</code>?</summary>
+    <div class="ans"><p>“With plain FOR UPDATE, every worker queues up behind the same locked row, so only one is ever busy. SKIP LOCKED makes rows other workers have locked invisible, so each worker takes a different row at the same time, and when nothing is free it returns zero rows immediately instead of blocking.”</p></div></details>
+
+  <details class="qa"><summary>How do you process the queue twice as fast, and why is that safe?</summary>
+    <div class="ans"><p>“Add more workers; that’s horizontal scaling. It’s safe because each row is locked from the claim until that job’s commit, so only one worker can hold it, and the others skip it rather than wait. I tested two workers on 46 orders and got zero duplicates, with one taking the even ids and the other the odd ones. Eventually the database itself becomes the bottleneck.”</p></div></details>
+
+  <details class="qa"><summary>What happens if every pending row is locked?</summary>
+    <div class="ans"><p>“The query returns zero rows immediately. It doesn’t wait and doesn’t go back to a locked row. The worker treats that as ‘nothing to do’, commits to close the empty transaction, sleeps, and polls again.”</p></div></details>
+
+  <details class="qa"><summary>Why commit when the query found nothing?</summary>
+    <div class="ans"><p>“The driver opened a transaction for the SELECT. If I don’t end it, the worker sits ‘idle in transaction’ for as long as the queue is empty. That stops Postgres cleaning up old row versions and gets killed by idle-transaction timeouts. The commit doesn’t save anything; it just closes the transaction.”</p></div></details>
+
+  <details class="qa"><summary>A worker is killed with <code>kill -9</code> after claiming a job. What happens?</summary>
+    <div class="ans"><p>“The process can’t clean up, but it doesn’t need to. Postgres sees the connection drop and rolls back the open transaction, which releases the lock. The job is still pending, so another worker claims it. No job is ever lost, so the queue gives at-least-once processing.”</p></div></details>
+
+  <details class="qa"><summary>Then why isn’t that enough for a trading engine?</summary>
+    <div class="ans"><p>“Because the side effect isn’t in the transaction. If the worker sent the order to the broker and then died before committing, the job goes back to pending and the next worker sends it again, so I buy twice. At-least-once plus retries means duplicates. The fix is an idempotency key: a unique client order id the broker remembers, so a repeat is recognised and ignored. That gives effectively exactly-once.”</p></div></details>
+
+  <details class="qa"><summary>At-most-once vs at-least-once vs exactly-once?</summary>
+    <div class="ans"><p>“At-most-once never repeats but can lose work. At-least-once never loses work but can repeat it after a failure. Exactly-once is what you want, and in practice you build it from at-least-once delivery plus idempotent processing, so a repeat has no extra effect.”</p></div></details>
+
+  <details class="qa"><summary>Pull or push: how do your workers get jobs?</summary>
+    <div class="ans"><p>“Pull. Each worker polls the table, and no coordinator assigns jobs. That keeps it simple and fault-tolerant: if a worker dies, the others just keep pulling. The cost is some empty polls; LISTEN/NOTIFY could add a wake-up signal if latency mattered.”</p></div></details>
+
+  <details class="qa"><summary>Why must the producer commit before it logs “new order”?</summary>
+    <div class="ans"><p>“Until it commits, the row is invisible to workers, and a crash or Ctrl+C rolls it back. I saw 15 orders printed and none saved. Committing first means every log line describes something that really exists.”</p></div></details>
+
+  <details class="qa"><summary>You see sessions stuck in <code>idle in transaction</code>. What do you do?</summary>
+    <div class="ans"><p>“Find them in <code>pg_stat_activity</code>; they’re holding locks and blocking cleanup. Kill them with <code>pg_terminate_backend(pid)</code>, which rolls back their transactions, so committed data is safe. To prevent it, set <code>idle_in_transaction_session_timeout</code> and make sure every code path commits or rolls back.”</p></div></details>
+</section>
+
+<!-- 15 -->
+<section id="cheatsheet">
+  <p class="sec-num">15</p>
+  <h2>Command cheat sheet</h2>
+<pre><code><span class="c"># ── Compose (run inside ~/exec-engine) ─────────────</span>
+docker compose config --no-interpolate   <span class="c"># check the file, secrets hidden</span>
+docker compose up -d                     <span class="c"># start in the background</span>
+docker compose ps                        <span class="c"># status: (health: starting) → (healthy)</span>
+docker compose exec db psql -U engine -d engine
+docker compose down                      <span class="c"># stop and remove containers, keep data</span>
+docker compose down -v                   <span class="c"># ⚠ also deletes the database</span>
+
+<span class="c"># ── Plain Docker ───────────────────────────────────</span>
+docker ps -a
+docker inspect NAME --format '{{json .Mounts}}'
+docker image inspect IMAGE --format '{{json .Config.Volumes}}'
+docker volume ls
+
+<span class="c"># ── Python ─────────────────────────────────────────</span>
+source .venv/bin/activate                <span class="c"># every new terminal</span>
+python hello_db.py
+.venv/bin/python -u worker.py | tee w1.log   <span class="c"># -u unbuffered; tee = screen + file</span>
+pkill -9 -f worker.py                    <span class="c"># instant kill (crash test)</span></code></pre>
+<pre><code><span class="c">-- ── SQL ──────────────────────────────────────────</span>
+SELECT cols FROM t WHERE cond ORDER BY id;
+INSERT INTO t (a, b) VALUES ('x', 1);
+UPDATE t SET col = 'v' WHERE id = 1;        <span class="c">-- SELECT with the same WHERE first</span>
+DELETE FROM t WHERE id = 1;
+UPDATE t SET qty = qty + 10 WHERE id = 1;   <span class="c">-- atomic, no lost update</span>
+SELECT qty FROM t WHERE id = 1 FOR UPDATE;  <span class="c">-- lock at read time</span>
+BEGIN; … COMMIT;   BEGIN; … ROLLBACK;
+ALTER TABLE t ADD CONSTRAINT name CHECK (cond);
+ALTER TABLE t ADD COLUMN c text NOT NULL DEFAULT 'x';
+ALTER TABLE t RENAME COLUMN old TO new;
+SELECT id FROM t WHERE status = 'pending'
+  ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED;  <span class="c">-- claim a job</span>
+SELECT pid, state FROM pg_stat_activity WHERE datname = 'engine';
+SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+  WHERE state = 'idle in transaction' AND datname = 'engine';
+\d t    \dt    \q</code></pre>
+</section>
+
+<!-- 16 -->
+<section id="reading">
+  <p class="sec-num">16</p>
+  <h2>DDIA reading plan</h2>
+  <p class="big">Kleppmann’s <em>Designing Data-Intensive Applications</em>, read alongside the build. You only need the sections your engine depends on; save the rest for later.</p>
+
+  <div class="callout"><span class="label">How to read it</span>
+    <p><strong>Do the experiment first, then read the matching section that evening.</strong> You’ll recognise everything, because you’ve already seen it happen. After each section, write <strong>three sentences in your own words</strong>; they’ll come up in the next warm-up. If a paragraph doesn’t make sense, mark it “?” and bring it to the next session.</p>
+  </div>
+
+  <div class="table-wrap"><table>
+    <tr><th>#</th><th>Read</th><th>Matches</th><th>Why it matters</th></tr>
+    <tr><td>1</td><td><strong>Ch 1</strong>: “Reliability”. Skim Scalability and Maintainability.</td><td><span class="tag">Now</span></td><td>Faults vs failures, the idea behind your crash demo.</td></tr>
+    <tr><td>2</td><td><strong>Ch 7</strong>: “The Slippery Concept of a Transaction”, then “The Meaning of ACID”</td><td><span class="tag ok">Done in build</span></td><td>Atomicity (“abortability”) and durability: your ROLLBACK and crash checks.</td></tr>
+    <tr><td>3</td><td><strong>Ch 7</strong>: “Weak Isolation Levels”, then “Read Committed”</td><td><span class="tag ok">Done in build</span></td><td>Your two-terminal tests: no dirty reads, no dirty writes, the row lock.</td></tr>
+    <tr><td>4</td><td><strong>Ch 7</strong>: “Snapshot Isolation and Repeatable Read”</td><td><span class="tag ok">Done in build</span></td><td>MVCC: why order 1 moved to the end, and why B saw the old value.</td></tr>
+    <tr><td>5</td><td><strong>Ch 7</strong>: “Preventing Lost Updates” ⭐</td><td><span class="tag">Catch up</span></td><td>Your <code>lost_update.py</code>, atomic writes (Fix 1) and explicit locking (FOR UPDATE). Read it <em>after</em> the FOR UPDATE experiment.</td></tr>
+    <tr><td>6</td><td><strong>Ch 11</strong>: “Transmitting Event Streams”, then “Message brokers” (acknowledgments and redelivery)</td><td><span class="tag">Read next ⭐</span></td><td>What a job queue must guarantee.</td></tr>
+    <tr><td>7</td><td><strong>Ch 8</strong>: “Process Pauses”, then “Knowledge, Truth, and Lies”: “The leader and the lock” and “Fencing tokens”</td><td><span class="tag">Topic 6 · Leases</span></td><td>A worker that <em>thinks</em> it still owns a job after a 30-second pause.</td></tr>
+    <tr><td>8</td><td><strong>Ch 7</strong>: “Handling errors and aborts” (in the ACID section), then <strong>Ch 8</strong>: “Unreliable Networks”</td><td><span class="tag">Topic 7 · Retries</span></td><td>The trap: retrying after a timeout can run something twice.</td></tr>
+    <tr><td>9</td><td><strong>Ch 11</strong>: “Fault Tolerance”, then “Idempotence”; <strong>Ch 12</strong>: “Exactly-once execution of an operation”, “Duplicate suppression” and “Operation identifiers”</td><td><span class="tag">Topic 8 · Idempotency</span></td><td>The theory behind your whole mission, and the best section for interviews.</td></tr>
+  </table></div>
+
+  <p>Section titles are from the 1st edition; use the table of contents to find them, since page numbers vary between printings. Chapters 2–6, 9 and 10 are worth reading after the project, but the engine doesn’t depend on them.</p>
+</section>
+
+    </article>
+  </div>
+
+  <footer>Next session: <code>SELECT … FOR UPDATE</code> in <code>for_update.py</code>, then a job queue with <code>FOR UPDATE SKIP LOCKED</code>.</footer>
+</div>
+
+<script>
+(function () {
+  var root = document.documentElement, btn = document.getElementById('themeBtn');
+  var modes = ['system', 'light', 'dark'], mode = 'system';
+  try { mode = localStorage.getItem('notes-theme') || 'system'; } catch (e) {}
+  function apply() {
+    if (mode === 'system') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', mode);
+    btn.textContent = 'Theme: ' + mode.charAt(0).toUpperCase() + mode.slice(1);
+  }
+  apply();
+  btn.addEventListener('click', function () {
+    mode = modes[(modes.indexOf(mode) + 1) % modes.length];
+    try { localStorage.setItem('notes-theme', mode); } catch (e) {}
+    apply();
+  });
+
+  document.querySelectorAll('pre').forEach(function (pre) {
+    var b = document.createElement('button');
+    b.className = 'copy'; b.type = 'button'; b.textContent = 'Copy';
+    b.addEventListener('click', function () {
+      var text = pre.querySelector('code').innerText;
+      (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(function () {
+        b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1200);
+      }, function () { b.textContent = 'Select & copy'; });
+    });
+    pre.appendChild(b);
+  });
+
+  var links = document.querySelectorAll('nav.toc a');
+  if ('IntersectionObserver' in window) {
+    var obs = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting) links.forEach(function (a) { a.classList.toggle('active', a.getAttribute('href') === '#' + en.target.id); });
+      });
+    }, { rootMargin: '-20% 0px -70% 0px' });
+    document.querySelectorAll('article section').forEach(function (s) { obs.observe(s); });
+  }
+})();
+</script>
+</body>
+</html>
